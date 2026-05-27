@@ -184,8 +184,10 @@ Slack:
 
 Mattermost:
 
-- Streams thinking, tool activity, and partial reply text into a single draft preview post that finalizes in place when the final answer is safe to send.
-- Falls back to sending a fresh final post if the preview post was deleted or is otherwise unavailable at finalize time.
+- Streams thinking, tool activity, and partial reply text into a single draft preview post.
+- `partial` finalizes the draft in place when the final answer is safe to send.
+- `block` appends draft chunks and tool/status updates, preserves that history, and sends the final answer as a separate normal reply.
+- `partial` falls back to sending a fresh final post if the preview post was deleted or is otherwise unavailable at finalize time.
 - Final media/error payloads cancel pending preview updates before normal delivery instead of flushing a temporary preview post.
 
 Matrix:

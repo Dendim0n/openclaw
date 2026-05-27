@@ -637,6 +637,37 @@ describe("deliverMattermostReplyWithDraftPreview", () => {
     expect(draftStream.clear).not.toHaveBeenCalled();
   });
 
+  it("keeps block previews intact and sends the final answer normally", async () => {
+    const draftStream = createDraftStreamMock();
+    const deliverFinal = vi.fn(async () => {});
+    const client = createMattermostClientMock();
+
+    await deliverMattermostReplyWithDraftPreview({
+      payload: { text: "Final answer", replyToId: "child-post-789" } as never,
+      info: { kind: "final" },
+      kind: "channel",
+      client,
+      draftStream,
+      effectiveReplyToId: "thread-root-456",
+      resolvePreviewFinalText: (text) => text?.trim(),
+      previewState: { finalizedViaPreviewPost: false },
+      preserveDraftAfterNormalFinal: true,
+      logVerboseMessage: vi.fn(),
+      deliverPayload: deliverFinal,
+    });
+
+    expect(updateMattermostPostSpy).not.toHaveBeenCalled();
+    expect(deliverFinal).toHaveBeenCalledTimes(1);
+    expect(deliverFinal).toHaveBeenCalledWith({
+      text: "Final answer",
+      replyToId: "child-post-789",
+    });
+    expect(draftStream.flush).toHaveBeenCalledTimes(1);
+    expect(draftStream.seal).toHaveBeenCalledTimes(1);
+    expect(draftStream.discardPending).not.toHaveBeenCalled();
+    expect(draftStream.clear).not.toHaveBeenCalled();
+  });
+
   it("keeps the existing preview unchanged when final delivery fails", async () => {
     const draftStream = createDraftStreamMock();
     const deliverFinal = vi.fn(async () => {
@@ -772,13 +803,23 @@ describe("resolveMattermostEffectiveReplyToId", () => {
     ).toBe("thread-root-456");
   });
 
-  it("suppresses existing thread roots when replyToMode is off", () => {
+  it("inherits existing thread roots when replyToMode is off", () => {
     expect(
       resolveMattermostEffectiveReplyToId({
         kind: "channel",
         postId: "post-123",
         replyToMode: "off",
         threadRootId: "thread-root-456",
+      }),
+    ).toBe("thread-root-456");
+  });
+
+  it("keeps top-level channel messages unthreaded when replyToMode is off", () => {
+    expect(
+      resolveMattermostEffectiveReplyToId({
+        kind: "channel",
+        postId: "post-123",
+        replyToMode: "off",
       }),
     ).toBeUndefined();
   });
@@ -857,7 +898,7 @@ describe("resolveMattermostThreadSessionContext", () => {
     });
   });
 
-  it("keeps threaded messages top-level when replyToMode is off", () => {
+  it("forks existing threaded messages even when replyToMode is off", () => {
     expect(
       resolveMattermostThreadSessionContext({
         baseSessionKey: "agent:main:mattermost:default:chan-1",
@@ -867,9 +908,9 @@ describe("resolveMattermostThreadSessionContext", () => {
         threadRootId: "root-456",
       }),
     ).toEqual({
-      effectiveReplyToId: undefined,
-      sessionKey: "agent:main:mattermost:default:chan-1",
-      parentSessionKey: undefined,
+      effectiveReplyToId: "root-456",
+      sessionKey: "agent:main:mattermost:default:chan-1:thread:root-456",
+      parentSessionKey: "agent:main:mattermost:default:chan-1",
     });
   });
 

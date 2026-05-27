@@ -539,7 +539,7 @@ for the current dist-tags before pinning a version.
         // Optional explicit URL for reverse-proxy/public deployments
         callbackUrl: "https://gateway.example.com/api/channels/mattermost/command",
       },
-      textChunkLimit: 4000,
+      textChunkLimit: 14000,
       chunkMode: "length",
     },
   },

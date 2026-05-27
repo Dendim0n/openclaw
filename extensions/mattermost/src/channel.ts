@@ -43,6 +43,7 @@ import {
   resolveMattermostGatewayAuthBypassPaths,
 } from "./channel-config-shared.js";
 import { MattermostChannelConfigSchema } from "./config-surface.js";
+import { MATTERMOST_TEXT_CHUNK_LIMIT } from "./constants.js";
 import { mattermostDoctor } from "./doctor.js";
 import { resolveMattermostGroupRequireMention } from "./group-mentions.js";
 import {
@@ -330,7 +331,7 @@ const mattermostOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   chunker: chunkTextForOutbound,
   chunkerMode: "markdown",
-  textChunkLimit: 4000,
+  textChunkLimit: MATTERMOST_TEXT_CHUNK_LIMIT,
   deliveryCapabilities: {
     durableFinal: {
       text: true,

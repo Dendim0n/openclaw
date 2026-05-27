@@ -22,6 +22,7 @@ import {
   normalizeTrimmedStringList,
   uniqueStrings,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { MATTERMOST_TEXT_CHUNK_LIMIT } from "../constants.js";
 import { getMattermostRuntime } from "../runtime.js";
 import {
   resolveMattermostAccount,
@@ -334,6 +335,7 @@ type MattermostDraftPreviewDeliverParams = {
   effectiveReplyToId?: string;
   resolvePreviewFinalText: (text?: string) => string | undefined;
   previewState: MattermostDraftPreviewState;
+  preserveDraftAfterNormalFinal?: boolean;
   logVerboseMessage: (message: string) => void;
   deliverPayload: (payload: ReplyPayload) => Promise<void>;
 };
@@ -342,6 +344,22 @@ export async function deliverMattermostReplyWithDraftPreview(
   params: MattermostDraftPreviewDeliverParams,
 ): Promise<void> {
   if (isReasoningReplyPayload(params.payload)) {
+    return;
+  }
+
+  const deliverNormally = async (payload: ReplyPayload) => {
+    const supplement = getReplyPayloadTtsSupplement(payload);
+    await params.deliverPayload(
+      supplement && !payload.text?.trim() && supplement.visibleTextAlreadyDelivered !== true
+        ? { ...payload, text: supplement.spokenText }
+        : payload,
+    );
+  };
+
+  if (params.info.kind === "final" && params.preserveDraftAfterNormalFinal) {
+    await params.draftStream.flush();
+    await params.draftStream.seal();
+    await deliverNormally(params.payload);
     return;
   }
 
@@ -395,14 +413,7 @@ export async function deliverMattermostReplyWithDraftPreview(
         );
       },
     }),
-    deliverNormally: async (payload) => {
-      const supplement = getReplyPayloadTtsSupplement(payload);
-      await params.deliverPayload(
-        supplement && !payload.text?.trim() && supplement.visibleTextAlreadyDelivered !== true
-          ? { ...payload, text: supplement.spokenText }
-          : payload,
-      );
-    },
+    deliverNormally,
   });
 }
 
@@ -441,7 +452,7 @@ export function resolveMattermostEffectiveReplyToId(params: {
     return undefined;
   }
   const threadRootId = normalizeOptionalString(params.threadRootId);
-  if (threadRootId && params.replyToMode !== "off") {
+  if (threadRootId) {
     return threadRootId;
   }
   const postId = normalizeOptionalString(params.postId);
@@ -765,7 +776,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           cfg,
           "mattermost",
           account.accountId,
-          { fallbackLimit: account.textChunkLimit ?? 4000 },
+          { fallbackLimit: account.textChunkLimit ?? MATTERMOST_TEXT_CHUNK_LIMIT },
         );
         const tableMode = core.channel.text.resolveMarkdownTableMode({
           cfg,
@@ -962,7 +973,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
       "mattermost",
       account.accountId,
       {
-        fallbackLimit: account.textChunkLimit ?? 4000,
+        fallbackLimit: account.textChunkLimit ?? MATTERMOST_TEXT_CHUNK_LIMIT,
       },
     );
     const shouldDeliverReplies = params.deliverReplies === true;
@@ -1637,7 +1648,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           "mattermost",
           account.accountId,
           {
-            fallbackLimit: account.textChunkLimit ?? 4000,
+            fallbackLimit: account.textChunkLimit ?? MATTERMOST_TEXT_CHUNK_LIMIT,
           },
         );
         const tableMode = core.channel.text.resolveMarkdownTableMode({
@@ -1668,6 +1679,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
         const draftToolProgressEnabled = shouldUpdateMattermostDraftToolProgress(account);
         const suppressDefaultToolProgressMessages =
           shouldSuppressMattermostDefaultToolProgressMessages(account);
+        const preserveDraftAfterNormalFinal = account.streamingMode === "block";
         const draftStream = draftPreviewEnabled
           ? createMattermostDraftStream({
               client,
@@ -1736,6 +1748,39 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
           lastPartialText = cleaned;
           draftStream.update(cleaned);
         };
+        let blockDraftText = "";
+        let lastBlockDraftEntry = "";
+        const appendBlockDraftEntry = (text?: string) => {
+          const cleaned = text?.trim();
+          if (!cleaned || cleaned === lastBlockDraftEntry) {
+            return;
+          }
+          blockDraftText = blockDraftText ? `${blockDraftText}\n\n${cleaned}` : cleaned;
+          lastBlockDraftEntry = cleaned;
+          draftStream.update(blockDraftText);
+        };
+        const updateBlockDraftFromPartial = (text?: string) => {
+          const cleaned = text?.trim();
+          if (!cleaned) {
+            return;
+          }
+          if (cleaned === lastPartialText) {
+            return;
+          }
+          if (
+            lastPartialText &&
+            lastPartialText.startsWith(cleaned) &&
+            cleaned.length < lastPartialText.length
+          ) {
+            return;
+          }
+          const appendText =
+            lastPartialText && cleaned.startsWith(lastPartialText)
+              ? cleaned.slice(lastPartialText.length).trim()
+              : cleaned;
+          lastPartialText = cleaned;
+          appendBlockDraftEntry(appendText);
+        };
 
         const { dispatcher, replyOptions, markDispatchIdle, markRunComplete } =
           core.channel.reply.createReplyDispatcherWithTyping({
@@ -1752,6 +1797,7 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
                 effectiveReplyToId,
                 resolvePreviewFinalText,
                 previewState,
+                preserveDraftAfterNormalFinal,
                 logVerboseMessage,
                 deliverPayload: async (payloadToDeliver) => {
                   const outcome = await deliverMattermostReplyPayload({
@@ -1884,7 +1930,9 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
                             : {}),
                           onModelSelected,
                           onPartialReply: (payload) => {
-                            if (account.streamingMode !== "progress") {
+                            if (account.streamingMode === "block") {
+                              updateBlockDraftFromPartial(payload.text);
+                            } else if (account.streamingMode !== "progress") {
                               updateDraftFromPartial(payload.text);
                             }
                           },
@@ -1896,19 +1944,26 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
                           },
                           onReasoningStream: async () => {
                             if (!lastPartialText) {
-                              draftStream.update("Thinking…");
+                              if (account.streamingMode === "block") {
+                                appendBlockDraftEntry("Thinking…");
+                              } else {
+                                draftStream.update("Thinking…");
+                              }
                             }
                           },
                           onToolStart: async (payload) => {
                             if (!draftToolProgressEnabled) {
                               return;
                             }
-                            draftStream.update(
-                              buildMattermostToolStatusText({
-                                ...payload,
-                                config: account.config,
-                              }),
-                            );
+                            const statusText = buildMattermostToolStatusText({
+                              ...payload,
+                              config: account.config,
+                            });
+                            if (account.streamingMode === "block") {
+                              appendBlockDraftEntry(statusText);
+                            } else {
+                              draftStream.update(statusText);
+                            }
                           },
                           onItemEvent: async (payload) => {
                             if (!draftToolProgressEnabled) {
@@ -1930,7 +1985,11 @@ export async function monitorMattermostProvider(opts: MonitorMattermostOpts = {}
                               },
                             );
                             if (progressText) {
-                              draftStream.update(progressText);
+                              if (account.streamingMode === "block") {
+                                appendBlockDraftEntry(progressText);
+                              } else {
+                                draftStream.update(progressText);
+                              }
                             }
                           },
                         },

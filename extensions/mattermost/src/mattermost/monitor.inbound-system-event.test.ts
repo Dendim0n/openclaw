@@ -444,6 +444,77 @@ describe("mattermost inbound user posts", () => {
     expect(ctx?.Provider).toBe("mattermost");
   });
 
+  it("appends block preview progress instead of replacing the draft", async () => {
+    const socket = new FakeWebSocket();
+    const abortController = new AbortController();
+    mockState.abortController = abortController;
+    const blockConfig: OpenClawConfig = {
+      channels: {
+        mattermost: {
+          ...testConfig.channels?.mattermost,
+          streaming: "block",
+        },
+      },
+    };
+    const draftUpdate = vi.fn();
+    const draftStop = vi.fn(async () => {});
+    mockState.runtimeCore = createRuntimeCore(blockConfig);
+    mockState.createMattermostDraftStream.mockReturnValue({
+      update: draftUpdate,
+      stop: draftStop,
+    });
+    mockState.dispatchReplyFromConfig.mockImplementation(async ({ replyOptions }) => {
+      replyOptions.onPartialReply?.({ text: "First chunk" });
+      await replyOptions.onToolStart?.({ name: "read" });
+      await replyOptions.onToolStart?.({ name: "read" });
+      replyOptions.onPartialReply?.({ text: "First chunk\n\nSecond chunk" });
+      mockState.abortController?.abort();
+    });
+
+    const monitor = monitorMattermostProvider({
+      config: blockConfig,
+      runtime: testRuntime(),
+      abortSignal: abortController.signal,
+      webSocketFactory: () => socket,
+    });
+
+    await vi.waitFor(() => {
+      expect(socket.openListenerCount).toBeGreaterThan(0);
+    });
+    socket.emitOpen();
+
+    await socket.emitMessage({
+      event: "posted",
+      data: {
+        channel_id: "chan-1",
+        channel_name: "town-square",
+        channel_display_name: "Town Square",
+        sender_name: "alice",
+        post: JSON.stringify({
+          id: "post-block-preview",
+          channel_id: "chan-1",
+          user_id: "user-1",
+          message: "show block progress",
+          create_at: 1_714_000_000_000,
+        }),
+      },
+      broadcast: {
+        channel_id: "chan-1",
+        user_id: "user-1",
+      },
+    });
+    socket.emitClose(1000);
+    await monitor;
+
+    expect(draftUpdate).toHaveBeenCalledTimes(3);
+    expect(draftUpdate.mock.calls.map(([text]) => text)).toEqual([
+      "First chunk",
+      "First chunk\n\nWorking",
+      "First chunk\n\nWorking\n\nSecond chunk",
+    ]);
+    expect(draftStop).toHaveBeenCalledTimes(1);
+  });
+
   it("does not drop inline command-looking group text from non-command-authorized senders", async () => {
     const socket = new FakeWebSocket();
     const abortController = new AbortController();

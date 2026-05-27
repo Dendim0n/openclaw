@@ -508,6 +508,10 @@ describe("mattermostPlugin", () => {
   });
 
   describe("outbound", () => {
+    it("uses the Mattermost-safe text chunk limit by default", () => {
+      expect(mattermostPlugin.outbound?.textChunkLimit).toBe(14000);
+    });
+
     it("renders presentation buttons for normal reply payload delivery", async () => {
       const renderPresentation = requireMattermostRenderPresentation();
       const sendPayload = requireMattermostSendPayload();

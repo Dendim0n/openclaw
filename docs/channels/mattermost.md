@@ -179,8 +179,27 @@ Config example:
 
 Notes:
 
-- Thread-scoped sessions use the triggering post id as the thread root.
+- Thread-scoped sessions use the existing Mattermost thread root when the inbound post is already in a thread. Top-level channel/group posts only start a new thread when `replyToMode` is `first`, `all`, or `batched`.
 - `first` and `all` are currently equivalent because once Mattermost has a thread root, follow-up chunks and media continue in that same thread.
+
+## Message length
+
+Mattermost server posts are limited to 16,383 characters. OpenClaw's Mattermost plugin defaults `channels.mattermost.textChunkLimit` to `14000` so Markdown fence repair, progress status, and final delivery metadata have room before the server limit.
+
+Override the limit globally or per account when your Mattermost server needs a lower cap:
+
+```json5
+{
+  channels: {
+    mattermost: {
+      textChunkLimit: 12000,
+      accounts: {
+        work: { textChunkLimit: 10000 },
+      },
+    },
+  },
+}
+```
 
 ## Access control (DMs)
 
@@ -265,7 +284,7 @@ Notes:
 
 ## Preview streaming
 
-Mattermost streams thinking, tool activity, and partial reply text into a single **draft preview post** that finalizes in place when the final answer is safe to send. The preview updates on the same post id instead of spamming the channel with per-chunk messages. Media/error finals cancel pending preview edits and use normal delivery instead of flushing a throwaway preview post.
+Mattermost streams thinking, tool activity, and partial reply text into a single **draft preview post**. The preview updates on the same post id instead of spamming the channel with per-chunk messages. In `partial` mode, the draft finalizes in place when the final answer is safe to send. In `block` mode, the draft keeps the complete in-progress history and the final answer is sent as a separate normal reply.
 
 Enable via `channels.mattermost.streaming`:
 
@@ -282,13 +301,13 @@ Enable via `channels.mattermost.streaming`:
 <AccordionGroup>
   <Accordion title="Streaming modes">
     - `partial` is the usual choice: one preview post that is edited as the reply grows, then finalized with the complete answer.
-    - `block` uses append-style draft chunks inside the preview post.
+    - `block` appends draft chunks and tool/status updates to the preview post, preserves that process history, then sends the final answer separately.
     - `progress` shows a status preview while generating and only posts the final answer at completion.
     - `off` disables preview streaming.
 
   </Accordion>
   <Accordion title="Streaming behavior notes">
-    - If the stream cannot be finalized in place (for example the post was deleted mid-stream), OpenClaw falls back to sending a fresh final post so the reply is never lost.
+    - If a `partial` stream cannot be finalized in place (for example the post was deleted mid-stream), OpenClaw falls back to sending a fresh final post so the reply is never lost.
     - Thinking-only payloads are suppressed from channel posts, including text that arrives as a `> Thinking` blockquote. Set `/reasoning on` to see thinking in other surfaces; the Mattermost final post keeps the answer only.
     - See [Streaming](/concepts/streaming#preview-streaming-modes) for the channel-mapping matrix.
 

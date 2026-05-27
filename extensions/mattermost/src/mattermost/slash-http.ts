@@ -8,6 +8,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
 import { isPrivateNetworkOptInEnabled } from "openclaw/plugin-sdk/ssrf-runtime";
+import { MATTERMOST_TEXT_CHUNK_LIMIT } from "../constants.js";
 import type { ResolvedMattermostAccount } from "../mattermost/accounts.js";
 import { getMattermostRuntime } from "../runtime.js";
 import {
@@ -829,7 +830,7 @@ async function handleSlashCommandAsync(params: {
   });
 
   const textLimit = core.channel.text.resolveTextChunkLimit(cfg, "mattermost", account.accountId, {
-    fallbackLimit: account.textChunkLimit ?? 4000,
+    fallbackLimit: account.textChunkLimit ?? MATTERMOST_TEXT_CHUNK_LIMIT,
   });
   const tableMode = core.channel.text.resolveMarkdownTableMode({
     cfg,

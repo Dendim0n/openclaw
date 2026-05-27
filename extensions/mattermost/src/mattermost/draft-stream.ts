@@ -1,5 +1,6 @@
 import { createFinalizableDraftLifecycle } from "openclaw/plugin-sdk/channel-lifecycle";
 import { formatChannelProgressDraftLineForEntry } from "openclaw/plugin-sdk/channel-streaming";
+import { MATTERMOST_TEXT_CHUNK_LIMIT } from "../constants.js";
 import {
   createMattermostPost,
   deleteMattermostPost,
@@ -7,7 +8,6 @@ import {
   type MattermostClient,
 } from "./client.js";
 
-const MATTERMOST_STREAM_MAX_CHARS = 4000;
 const DEFAULT_THROTTLE_MS = 1000;
 
 type MattermostDraftStream = {
@@ -64,8 +64,8 @@ export function createMattermostDraftStream(params: {
   warn?: (message: string) => void;
 }): MattermostDraftStream {
   const maxChars = Math.min(
-    params.maxChars ?? MATTERMOST_STREAM_MAX_CHARS,
-    MATTERMOST_STREAM_MAX_CHARS,
+    params.maxChars ?? MATTERMOST_TEXT_CHUNK_LIMIT,
+    MATTERMOST_TEXT_CHUNK_LIMIT,
   );
   const throttleMs = Math.max(250, params.throttleMs ?? DEFAULT_THROTTLE_MS);
   const streamState = { stopped: false, final: false };
